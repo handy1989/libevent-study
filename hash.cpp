@@ -47,27 +47,12 @@ void hash_last(hash_table *);
 hash_link *hash_get_bucket(hash_table *, unsigned int);
 void hashFreeMemory(hash_table *);
 void hashFreeItems(hash_table *, HASHFREE *);
-HASHHASH hash_string;
 HASHHASH hash4;
 const char *hashKeyStr(hash_link *);
 
 #define  DEFAULT_HASH_SIZE 7951	/* prime number < 8192 */
 
 static void hash_next_bucket(hash_table * hid);
-
-unsigned int hash_string(const void *data, unsigned int size)
-{
-    const char *s = (char*)const_cast<void*>(data);
-    unsigned int n = 0;
-    unsigned int j = 0;
-    unsigned int i = 0;
-    while (*s) {
-	j++;
-	n ^= 271 * (unsigned) *s++;
-    }
-    i = n ^ (j * 271);
-    return i % size;
-}
 
 unsigned int hash4(const void *data, unsigned int size)
 {
@@ -405,24 +390,34 @@ private:
     char* buf2_;
 };
 
+void random_buf(char* buf, int len)
+{
+    for (int i = 0; i < len; ++i)
+    {
+        buf[i] = rand() % 10 + '0';
+    }
+    buf[len] = 0;
+}
+
 void test1(int count)
 {
     Answer answer;
     uint64_t begin = getCurMillseconds();
     char *key = (char*)malloc(1024 * 1024);
     char *val= (char*)malloc(1024 * 1024);
+    int total_len = 0;
     for (int i= 0; i < count; ++i)
     {
-        int key_len = rand() % 60 + 10;
-        int val_len = rand() % 80 + 80;
-        memset(key, 'A', key_len);
-        key[key_len] = 0;
-        memset(val, 'A', val_len);
-        val[val_len] = 0;
+        int key_len = rand() % 290 + 10;
+        int val_len = rand() % 2048 + 1024;
+        total_len += key_len;
+        total_len += val_len;
+        random_buf(key, key_len);
+        random_buf(val, val_len);
         answer.put(key, val);
-        printf("add key:%s val:%s\n", key, val);
+        //printf("add key:%s val:%s\n", key, val);
         string str = answer.get(key);
-        printf("get key:%s val:%s\n", key, str.c_str());
+        //printf("get key:%s val:%s\n", key, str.c_str());
         if (strcmp(val, str.c_str()) != 0)
         {
             printf("different!\n");
@@ -432,7 +427,7 @@ void test1(int count)
         }
     }
     uint64_t end = getCurMillseconds();
-    printf("add %d items costs %lu ms\n", count, end - begin);
+    printf("add %d items costs %lu ms, total buf len:%d\n", count, end - begin, total_len);
     if (key) free(key);
     if (val) free(val);
 }
@@ -440,7 +435,7 @@ void test1(int count)
 int main(int argc, char** argv)
 {
 
-    test1(1000);
+    test1(10);
     sleep(60);
     return 0;
     {
