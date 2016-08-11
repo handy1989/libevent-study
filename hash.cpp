@@ -55,8 +55,7 @@ const char *hashKeyStr(hash_link *);
 
 static void hash_next_bucket(hash_table * hid);
 
-unsigned int
-hash_string(const void *data, unsigned int size)
+unsigned int hash_string(const void *data, unsigned int size)
 {
     const char *s = (char*)const_cast<void*>(data);
     unsigned int n = 0;
@@ -70,12 +69,7 @@ hash_string(const void *data, unsigned int size)
     return i % size;
 }
 
-/* the following function(s) were adapted from
- *    usr/src/lib/libc/db/hash_func.c, 4.4 BSD lite */
-
-/* Hash function from Chris Torek. */
-unsigned int
-hash4(const void *data, unsigned int size)
+unsigned int hash4(const void *data, unsigned int size)
 {
     const char *key = (char*)const_cast<void*>(data);
     size_t loop;
@@ -126,13 +120,7 @@ hash4(const void *data, unsigned int size)
     return h % size;
 }
 
-/*
- *  hash_create - creates a new hash table, uses the cmp_func
- *  to compare keys.  Returns the identification for the hash table;
- *  otherwise returns a negative number on error.
- */
-hash_table *
-hash_create(HASHCMP * cmp_func, int hash_sz, HASHHASH * hash_func)
+hash_table* hash_create(HASHCMP * cmp_func, int hash_sz, HASHHASH * hash_func)
 {
     hash_table *hid = (hash_table*)malloc(sizeof(hash_table));
     if (!hash_sz)
@@ -148,14 +136,7 @@ hash_create(HASHCMP * cmp_func, int hash_sz, HASHHASH * hash_func)
     return hid;
 }
 
-/*
- *  hash_join - joins a hash_link under its key lnk->key
- *  into the hash table 'hid'.  
- *
- *  It does not copy any data into the hash table, only links pointers.
- */
-void
-hash_join(hash_table * hid, hash_link * lnk)
+void hash_join(hash_table * hid, hash_link * lnk)
 {
     int i;
     i = hid->hash(lnk->key, hid->size);
@@ -164,13 +145,7 @@ hash_join(hash_table * hid, hash_link * lnk)
     hid->count++;
 }
 
-/*
- *  hash_lookup - locates the item under the key 'k' in the hash table
- *  'hid'.  Returns a pointer to the hash bucket on success; otherwise
- *  returns NULL.
- */
-hash_link *
-hash_lookup(hash_table * hid, const void *k)
+hash_link* hash_lookup(hash_table * hid, const void *k)
 {
     hash_link *walker;
     int b;
@@ -192,12 +167,7 @@ hash_next_bucket(hash_table * hid)
 	hid->next = hid->buckets[hid->current_slot];
 }
 
-/*
- *  hash_first - initializes the hash table for the hash_next()
- *  function.
- */
-void
-hash_first(hash_table * hid)
+void hash_first(hash_table * hid)
 {
     assert(NULL == hid->next);
     hid->current_slot = 0;
@@ -206,14 +176,7 @@ hash_first(hash_table * hid)
 	hash_next_bucket(hid);
 }
 
-/*
- *  hash_next - returns the next item in the hash table 'hid'.
- *  Otherwise, returns NULL on error or end of list.  
- *
- *  MUST call hash_first() before hash_next().
- */
-hash_link *
-hash_next(hash_table * hid)
+hash_link* hash_next(hash_table * hid)
 {
     hash_link* node = hid->next;
     if (NULL == node)
@@ -224,28 +187,14 @@ hash_next(hash_table * hid)
     return node;
 }
 
-/*
- *  hash_last - resets hash traversal state to NULL
- *
- */
-void
-hash_last(hash_table * hid)
+void hash_last(hash_table * hid)
 {
     assert(hid != NULL);
     hid->next = NULL;
     hid->current_slot = 0;
 }
 
-/*
- *  hash_remove_link - deletes the given hash_link node from the 
- *  hash table 'hid'.  Does not free the item, only removes it
- *  from the list.
- *
- *  An assertion is triggered if the hash_link is not found in the
- *  list.
- */
-void
-hash_remove_link(hash_table * hid, hash_link * hl)
+void hash_remove_link(hash_table * hid, hash_link * hl)
 {
     hash_link **P;
     int i;
@@ -266,20 +215,14 @@ hash_remove_link(hash_table * hid, hash_link * hl)
     assert(0);
 }
 
-/*
- *  hash_get_bucket - returns the head item of the bucket 
- *  in the hash table 'hid'. Otherwise, returns NULL on error.
- */
-hash_link *
-hash_get_bucket(hash_table * hid, unsigned int bucket)
+hash_link* hash_get_bucket(hash_table * hid, unsigned int bucket)
 {
     if (bucket >= hid->size)
 	return NULL;
     return (hid->buckets[bucket]);
 }
 
-void
-hashFreeItems(hash_table * hid, HASHFREE * free_func)
+void hashFreeItems(hash_table * hid, HASHFREE * free_func)
 {
     hash_link *l;
     hash_link **list;
@@ -296,8 +239,7 @@ hashFreeItems(hash_table * hid, HASHFREE * free_func)
     free(list);
 }
 
-void
-hashFreeMemory(hash_table * hid)
+void hashFreeMemory(hash_table * hid)
 {
     if(hid == NULL)
         return;
@@ -322,8 +264,7 @@ static int hash_primes[] =
     65357
 };
 
-int
-hashPrime(int n)
+int hashPrime(int n)
 {
     int I = sizeof(hash_primes) / sizeof(int);
     int i;
@@ -340,11 +281,7 @@ hashPrime(int n)
     return best_prime;
 }
 
-/*
- * return the key of a hash_link as a const string
- */
-const char *
-hashKeyStr(hash_link * hl)
+const char* hashKeyStr(hash_link * hl)
 {
     return (const char *) hl->key;
 }
@@ -358,9 +295,9 @@ uint64_t getCurMillseconds() {
 class Answer
 {
 public:
-    Answer(int size)
+    Answer()
     {
-        if ((hid_ = hash_create((HASHCMP *) strcmp, size, hash4)) < 0) 
+        if ((hid_ = hash_create((HASHCMP *) strcmp, 100000, hash4)) < 0) 
         {
             printf("hash_create error.\n");
             exit(1);
@@ -424,20 +361,28 @@ public:
     void put(string key, string value, bool write_flag)
     {
         //printf("put key:%s val:%s\n", key.c_str(), value.c_str());
+        hash_link* item = hash_lookup(hid_, key.c_str());
+        if (item)
+        {
+            free(item->val);
+            char* v = (char*)malloc(value.size() + 1);
+            sprintf(v, "%s", value.c_str());
+            item->val = v;
+            return ;
+        }
         char* k = (char*)malloc(key.size() + 1);
         sprintf(k, "%s", key.c_str());
         
         char* v = (char*)malloc(value.size() + 1);
         sprintf(v, "%s", value.c_str());
 
-        hash_link* item = (hash_link*)malloc(sizeof(hash_link));
+        item = (hash_link*)malloc(sizeof(hash_link));
         item->key = k;
         item->val = v;
         hash_join(hid_, item);
 
         if (write_flag)
         {
-            int total_len = 0;
             int len = key.size();
             char* p = buf1_;
             memcpy(p, &len, 4);
@@ -449,11 +394,8 @@ public:
             p+= 4;
             memcpy(p, v, len);
             p+= len;
-
             write(fd_, buf1_, p - buf1_);
-
         }
-
     }
 
 private:
@@ -463,17 +405,51 @@ private:
     char* buf2_;
 };
 
+void test1(int count)
+{
+    Answer answer;
+    uint64_t begin = getCurMillseconds();
+    char *key = (char*)malloc(1024 * 1024);
+    char *val= (char*)malloc(1024 * 1024);
+    for (int i= 0; i < count; ++i)
+    {
+        int key_len = rand() % 60 + 10;
+        int val_len = rand() % 80 + 80;
+        memset(key, 'A', key_len);
+        key[key_len] = 0;
+        memset(val, 'A', val_len);
+        val[val_len] = 0;
+        answer.put(key, val);
+        printf("add key:%s val:%s\n", key, val);
+        string str = answer.get(key);
+        printf("get key:%s val:%s\n", key, str.c_str());
+        if (strcmp(val, str.c_str()) != 0)
+        {
+            printf("different!\n");
+            printf("set val:%s\n", val);
+            printf("get val:%s\n", str.c_str());
+            break;
+        }
+    }
+    uint64_t end = getCurMillseconds();
+    printf("add %d items costs %lu ms\n", count, end - begin);
+    if (key) free(key);
+    if (val) free(val);
+}
+
 int main(int argc, char** argv)
 {
-    Answer answer(1000000);
 
+    test1(1000);
+    sleep(60);
+    return 0;
     {
-        char query[16];
-        sprintf(query, "%015d", 8);
-        string val = answer.get(query);
-        printf("query key:%s val:%s\n", query, val.c_str());
+        //char query[16];
+        //sprintf(query, "%015d", 8);
+        //string val = answer.get(query);
+        //printf("query key:%s val:%s\n", query, val.c_str());
 
-        return 0;
+        //return 0;
 
     }
 
@@ -485,6 +461,7 @@ int main(int argc, char** argv)
     }
 
     
+    Answer answer;
     uint64_t begin = getCurMillseconds();
     int count = atoi(argv[1]);
     for (int i= 0; i < count; ++i)
