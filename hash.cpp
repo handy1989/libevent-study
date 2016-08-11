@@ -11,8 +11,12 @@
 #include <fcntl.h>
 
 #include <string>
+#include <map>
+#include <vector>
 
 using std::string;
+using std::map;
+using std::vector;
 
 typedef void HASHFREE(void *);
 typedef int HASHCMP(const void *, const void *);
@@ -295,26 +299,40 @@ public:
         }
         buf1_ = (char*)malloc(1024 * 1024);
         buf2_ = (char*)malloc(1024 * 1024);
-        int len;
-        while (read(fd_, &len, 4) > 0)
+        int klen;
+        int vlen;
+        while (true)
         {
-            if (read(fd_, buf1_, len) != len)
+            int n = read(fd_, &klen, 4);
+            if (n != 4)
             {
-                printf("read key failed!\n");
+                //printf("read klen failed!\n");
+                lseek(fd_, -1 * n, SEEK_CUR);
                 break;
             }
-            if (read(fd_, &len, 4) != 4)
+            n = read(fd_, buf1_, klen);
+            if (n != klen)
             {
-                printf("read value len failed!\n");
+                //printf("read key faield!\n");
+                lseek(fd_, -1 * (4 + n), SEEK_CUR);
                 break;
             }
-            buf1_[len] = 0;
-            if (read(fd_, buf2_, len) != len)
+            n = read(fd_, &vlen, 4);
+            if (n != 4)
             {
-                printf("read value failed!\n");
+                //printf("read vlen failed!\n");
+                lseek(fd_, -1 * (4 + klen + n), SEEK_CUR);
                 break;
             }
-            buf2_[len] = 0;
+            n = read(fd_, buf2_, vlen);
+            if (n != vlen)
+            {
+                //printf("read val failed!\n");
+                lseek(fd_, -1 * (4 + klen + 4 + n), SEEK_CUR);
+                break;
+            }
+            buf1_[klen] = 0;
+            buf2_[vlen] = 0;
             put(buf1_, buf2_, false);
         }
     }
@@ -327,6 +345,15 @@ public:
 
     string get(string key)
     {
+        //map<string, string>::iterator it = data_.find(key);
+        //if (it != data_.end())
+        //{
+        //    return it->second;
+        //}
+        //else
+        //{
+        //    return "NULL";
+        //}
         hash_link* item = hash_lookup(hid_, key.c_str());
         if (item)
         {
@@ -365,19 +392,20 @@ public:
         item->key = k;
         item->val = v;
         hash_join(hid_, item);
-
+        //data_[key] = value;
+        //printf("put key:%s val:%s\n", key.c_str(), value.c_str());
         if (write_flag)
         {
             int len = key.size();
             char* p = buf1_;
             memcpy(p, &len, 4);
             p += 4;
-            memcpy(p, k, len);
+            memcpy(p, key.c_str(), len);
             p += len;
             len = value.size();
             memcpy(p, &len, 4);
             p+= 4;
-            memcpy(p, v, len);
+            memcpy(p, value.c_str(), len);
             p+= len;
             write(fd_, buf1_, p - buf1_);
         }
@@ -385,6 +413,7 @@ public:
 
 private:
     hash_table* hid_;
+    map<string, string> data_;
     int fd_;
     char* buf1_;
     char* buf2_;
@@ -405,29 +434,57 @@ void test1(int count)
     uint64_t begin = getCurMillseconds();
     char *key = (char*)malloc(1024 * 1024);
     char *val= (char*)malloc(1024 * 1024);
-    int total_len = 0;
-    for (int i= 0; i < count; ++i)
+    int64_t total_len = 0;
+    map<string, string> items;
+    vector<string> keys;
+    for (int i = 0; i < count; ++i)
     {
-        int key_len = rand() % 290 + 10;
-        int val_len = rand() % 2048 + 1024;
-        total_len += key_len;
-        total_len += val_len;
-        random_buf(key, key_len);
-        random_buf(val, val_len);
+        //int key_len = rand() % 60 + 10;
+        //int val_len = rand() % 80 + 80;
+        //total_len += key_len;
+        //total_len += val_len;
+        //random_buf(key, key_len);
+        //random_buf(val, val_len);
+        sprintf(key, "%08d", i);
+        sprintf(val, "%08d", i);
         answer.put(key, val);
-        //printf("add key:%s val:%s\n", key, val);
-        string str = answer.get(key);
-        //printf("get key:%s val:%s\n", key, str.c_str());
-        if (strcmp(val, str.c_str()) != 0)
+        items[key] = val;
+        keys.push_back(key);
+        printf("add key:%s val:%s\n", key, val);
+    }
+    begin = getCurMillseconds();
+    for (vector<string>::iterator it = keys.begin(); it != keys.end(); ++it)
+    {
+        items.find(*it);
+    }
+    uint64_t end = getCurMillseconds();
+    printf("query map %lu items costs %lu ms\n", keys.size(), end - begin);
+
+    begin = getCurMillseconds();
+    for (vector<string>::iterator it = keys.begin(); it != keys.end(); ++it)
+    {
+        string val = answer.get(*it);
+        printf("get hash, key:%s val:%s\n", it->c_str(), val.c_str());
+    }
+    end = getCurMillseconds();
+    printf("query hash %lu items costs %lu ms\n", keys.size(), end - begin);
+
+    for (map<string, string>::iterator it = items.begin(); it != items.end(); ++it)
+    {
+        string str = answer.get(it->first);
+        if (str != it->second)
         {
-            printf("different!\n");
-            printf("set val:%s\n", val);
+            printf("different, key:%s\n", it->first.c_str());
+            printf("set val:%s\n", it->second.c_str());
             printf("get val:%s\n", str.c_str());
             break;
         }
+        printf("key:%s\n", it->first.c_str());
+        printf("set val:%s\n", it->second.c_str());
+        printf("get val:%s\n", str.c_str());
     }
-    uint64_t end = getCurMillseconds();
-    printf("add %d items costs %lu ms, total buf len:%d\n", count, end - begin, total_len);
+    end = getCurMillseconds();
+    printf("add %d items costs %lu ms, total buf len:%ld\n", count, end - begin, total_len);
     if (key) free(key);
     if (val) free(val);
 }
@@ -435,7 +492,7 @@ void test1(int count)
 int main(int argc, char** argv)
 {
 
-    test1(10);
+    test1(200000);
     sleep(60);
     return 0;
     {
