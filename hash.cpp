@@ -42,17 +42,13 @@ struct _hash_table {
 
 hash_table *hash_create(HASHCMP *, int, HASHHASH *);
 void hash_join(hash_table *, hash_link *);
-void hash_remove_link(hash_table *, hash_link *);
-int hashPrime(int n);
 hash_link *hash_lookup(hash_table *, const void *);
 void hash_first(hash_table *);
 hash_link *hash_next(hash_table *);
-void hash_last(hash_table *);
 hash_link *hash_get_bucket(hash_table *, unsigned int);
 void hashFreeMemory(hash_table *);
 void hashFreeItems(hash_table *, HASHFREE *);
 HASHHASH hash4;
-const char *hashKeyStr(hash_link *);
 
 #define  DEFAULT_HASH_SIZE 7951	/* prime number < 8192 */
 
@@ -176,34 +172,6 @@ hash_link* hash_next(hash_table * hid)
     return node;
 }
 
-void hash_last(hash_table * hid)
-{
-    assert(hid != NULL);
-    hid->next = NULL;
-    hid->current_slot = 0;
-}
-
-void hash_remove_link(hash_table * hid, hash_link * hl)
-{
-    hash_link **P;
-    int i;
-    assert(hl != NULL);
-    i = hid->hash(hl->key, hid->size);
-    for (P = &hid->buckets[i]; *P; P = &(*P)->next) {
-	if (*P != hl)
-	    continue;
-	*P = hl->next;
-	if (hid->next == hl) {
-	    hid->next = hl->next;
-	    if (NULL == hid->next)
-		hash_next_bucket(hid);
-	}
-	hid->count--;
-	return;
-    }
-    assert(0);
-}
-
 hash_link* hash_get_bucket(hash_table * hid, unsigned int bucket)
 {
     if (bucket >= hid->size)
@@ -237,49 +205,18 @@ void hashFreeMemory(hash_table * hid)
     free(hid);
 }
 
-static int hash_primes[] =
-{
-    103,
-    229,
-    467,
-    977,
-    1979,
-    4019,
-    6037,
-    7951,
-    12149,
-    16231,
-    33493,
-    65357
-};
-
-int hashPrime(int n)
-{
-    int I = sizeof(hash_primes) / sizeof(int);
-    int i;
-    int best_prime = hash_primes[0];
-    double min = fabs(log((double) n) - log((double) hash_primes[0]));
-    double d;
-    for (i = 0; i < I; i++) {
-	d = fabs(log((double) n) - log((double) hash_primes[i]));
-	if (d > min)
-	    continue;
-	min = d;
-	best_prime = hash_primes[i];
-    }
-    return best_prime;
-}
-
-const char* hashKeyStr(hash_link * hl)
-{
-    return (const char *) hl->key;
-}
-
 uint64_t getCurMillseconds() {
     struct timeval now;
     gettimeofday(&now, NULL);
     return now.tv_sec * 1000 + now.tv_usec / 1000;
 }
+
+struct hash_value
+{
+    void* value_raw;
+    int value_offset;
+    int value_len;
+};
 
 class Answer
 {
@@ -288,53 +225,33 @@ public:
     {
         if ((hid_ = hash_create((HASHCMP *) strcmp, 100000, hash4)) < 0) 
         {
-            printf("hash_create error.\n");
+            //printf("hash_create error.\n");
             exit(1);
         }
-        fd_ = open("tmp.dat", O_CREAT | O_RDWR, S_IRWXU | S_IRWXO);
-        if (fd_ <= 0)
+        fd_data_ = open("data.db", O_CREAT | O_RDWR, S_IRWXU | S_IRWXO);
+        if (fd_data_ <= 0)
         {
-            printf("open tmp.dat failed!\n");
+            //printf("open tmp.dat failed!\n");
             exit(1);
         }
+        fd_index_ = open("index.db", O_CREAT | O_RDWR, S_IRWXU | S_IRWXO);
+        if (fd_index_ <= 0)
+        {
+            exit(1);
+        }
+
         buf1_ = (char*)malloc(1024 * 1024);
         buf2_ = (char*)malloc(1024 * 1024);
-        int klen;
-        int vlen;
-        while (true)
-        {
-            int n = read(fd_, &klen, 4);
-            if (n != 4)
-            {
-                //printf("read klen failed!\n");
-                lseek(fd_, -1 * n, SEEK_CUR);
-                break;
-            }
-            n = read(fd_, buf1_, klen);
-            if (n != klen)
-            {
-                //printf("read key faield!\n");
-                lseek(fd_, -1 * (4 + n), SEEK_CUR);
-                break;
-            }
-            n = read(fd_, &vlen, 4);
-            if (n != 4)
-            {
-                //printf("read vlen failed!\n");
-                lseek(fd_, -1 * (4 + klen + n), SEEK_CUR);
-                break;
-            }
-            n = read(fd_, buf2_, vlen);
-            if (n != vlen)
-            {
-                //printf("read val failed!\n");
-                lseek(fd_, -1 * (4 + klen + 4 + n), SEEK_CUR);
-                break;
-            }
-            buf1_[klen] = 0;
-            buf2_[vlen] = 0;
-            put(buf1_, buf2_, false);
-        }
+
+        total_value_size_in_memory_ = 0;
+        total_value_offset_ = 0;
+        max_value_size_in_memory_ = 100 * 1024 * 1024;
+        last_value_offset_ = 0;
+        last_value_len_ = 0;
+
+        read_index();
+        read_data();
+
     }
     
     ~Answer()
@@ -343,21 +260,145 @@ public:
         if (buf2_)free(buf2_);
     }
 
+
+    void read_index()
+    {
+        string key;
+        int value_offset;
+        int value_len;
+        int offset = 0;
+        while (true)
+        {
+            if (!read_index_from_disk(key, value_offset, value_len))
+            {
+                break;
+            }
+            offset += (4 + key.size() + 4 + 4);
+
+            char* k = (char*)malloc(key.size() + 1);
+            memcpy(k, key.c_str(), key.size());
+            k[key.size()] = 0; 
+
+            hash_link* item = hash_lookup(hid_, key.c_str());
+            if (item)
+            {
+                hash_value* value = (hash_value*)item->val;
+                value->value_offset = value_offset;
+                value->value_len = value_len;
+            }
+            else
+            {
+                hash_value* v = (hash_value*)malloc(sizeof(hash_value));
+                v->value_raw = NULL;
+                v->value_offset = value_offset;
+                v->value_len = value_len;
+                item = (hash_link*)malloc(sizeof(hash_link));
+                item->key = k;
+                item->val = v;
+                hash_join(hid_, item);
+            }
+        }
+        lseek(fd_index_, offset, SEEK_SET); 
+    }
+    
+    bool read_index_from_disk(string& key, int& value_offset, int value_len)
+    {
+        // keylen key vlen value_offset
+        int klen;
+        if (read(fd_index_, &klen, 4) != 4)
+        {
+            return false;
+        }
+        if (read(fd_index_, buf1_, klen) != klen)
+        {
+            return false;
+        }
+        if (read(fd_index_, &value_len, 4) != 4)
+        {
+            return false;
+        }
+        if (read(fd_index_, &value_offset, 4) != 4)
+        {
+            return false;
+        }
+        buf1_[klen] = 0;
+        key = buf1_;
+        last_value_offset_ += value_len;
+        last_value_len_ = value_len;
+        return true;
+    }
+
+    void read_data()
+    {
+       // 遍历hash表，读取value_offset，再从磁盘读取真实的value
+       hash_first(hid_);
+       hash_link* node;
+       int count = 0;
+       while ((node = hash_next(hid_)) && count < hid_->count)
+       {
+            char* key = (char*)node->key;
+            hash_value* value = (hash_value*)node->val;
+            if (total_value_size_in_memory_ < max_value_size_in_memory_)
+            {
+                char* v;
+                if (read_data_from_disk(value->value_offset, value->value_len, &v))
+                {
+                    // 读取value成功
+                    hash_link* item = hash_lookup(hid_, key);
+                    if (item)
+                    {
+                        ((hash_value*)item->val)->value_raw = v;
+                    }
+                }
+
+            }
+            total_value_size_in_memory_ += value->value_len;
+            ++count;
+       }
+       // 读取最后一块value，看是否完好
+       lseek(fd_data_, last_value_offset_, SEEK_SET);
+       if (read(fd_data_, buf1_, last_value_len_) != last_value_len_)
+       {
+           lseek(fd_data_, last_value_offset_, SEEK_SET);
+           total_value_offset_ = last_value_offset_;
+       }
+       else
+       {
+           total_value_offset_ = last_value_offset_ + last_value_len_;
+       }
+    }
+
+    bool read_data_from_disk(const int offset, const int value_len, char** value)
+    {
+        lseek(fd_data_, offset, SEEK_SET);
+        if (read(fd_data_, buf1_, value_len) != value_len)
+        {
+            return false;
+        }
+        *value = (char*)malloc(value_len + 1);
+        memcpy(*value, buf1_, value_len);
+        (*value)[value_len] = 0;
+
+        return true;
+    }
+
     string get(string key)
     {
-        //map<string, string>::iterator it = data_.find(key);
-        //if (it != data_.end())
-        //{
-        //    return it->second;
-        //}
-        //else
-        //{
-        //    return "NULL";
-        //}
         hash_link* item = hash_lookup(hid_, key.c_str());
         if (item)
         {
-            return (char*)item->val;
+            hash_value* hval = (hash_value*)item->val;
+            if (hval->value_raw)
+            {
+                return (char*)hval->value_raw;
+            }
+            else
+            {
+                lseek(fd_data_, hval->value_offset, SEEK_SET);
+                read(fd_data_, buf1_, hval->value_len);
+                buf1_[hval->value_len] = 0;
+                return buf1_;
+            }
         }
         else
         {
@@ -365,58 +406,93 @@ public:
         }
     }
 
-    void put(string key, string value)
+    void put(const string& key, const string& value)
     {
-        return put(key, value, true);
-    }
+        // 追加索引文件
+        int klen = key.size();
+        write(fd_index_, &klen, 4);
+        write(fd_index_, key.c_str(), klen);
+        int vlen = value.size();
+        write(fd_index_, &vlen, 4);
+        write(fd_index_, &total_value_offset_, 4);
 
-    void put(string key, string value, bool write_flag)
-    {
-        //printf("put key:%s val:%s\n", key.c_str(), value.c_str());
+        // 追加数据文件
+        lseek(fd_data_, total_value_offset_, SEEK_SET);
+        write(fd_data_, value.c_str(), value.size());
+        last_value_offset_ = total_value_offset_;
+        last_value_len_ = value.size();
+        total_value_offset_ += value.size();
+
+        // 添加到hash表
         hash_link* item = hash_lookup(hid_, key.c_str());
         if (item)
         {
-            free(item->val);
-            char* v = (char*)malloc(value.size() + 1);
-            sprintf(v, "%s", value.c_str());
-            item->val = v;
-            return ;
+            hash_value* v = (hash_value*)item->val;
+            free(v->value_raw);
+            v->value_raw = NULL;
+            total_value_size_in_memory_ -= v->value_len;
+            v->value_len = value.size();
+            v->value_offset = last_value_offset_;
+            if (total_value_size_in_memory_ + value.size() < max_value_size_in_memory_)
+            {
+                char* new_value_raw = (char*)malloc(value.size() + 1);
+                memcpy(new_value_raw, value.c_str(), value.size());
+                new_value_raw[value.size()] = 0;
+                v->value_raw = new_value_raw;
+                total_value_size_in_memory_ += value.size();
+            }
         }
-        char* k = (char*)malloc(key.size() + 1);
-        sprintf(k, "%s", key.c_str());
-        
-        char* v = (char*)malloc(value.size() + 1);
-        sprintf(v, "%s", value.c_str());
-
-        item = (hash_link*)malloc(sizeof(hash_link));
-        item->key = k;
-        item->val = v;
-        hash_join(hid_, item);
-        //data_[key] = value;
-        //printf("put key:%s val:%s\n", key.c_str(), value.c_str());
-        if (write_flag)
+        else
         {
-            int len = key.size();
-            char* p = buf1_;
-            memcpy(p, &len, 4);
-            p += 4;
-            memcpy(p, key.c_str(), len);
-            p += len;
-            len = value.size();
-            memcpy(p, &len, 4);
-            p+= 4;
-            memcpy(p, value.c_str(), len);
-            p+= len;
-            write(fd_, buf1_, p - buf1_);
+            char* k = (char*)malloc(key.size() + 1);
+            memcpy(k, key.c_str(), key.size());
+            k[key.size()] = 0;
+
+            item = (hash_link*)malloc(sizeof(hash_link));
+            item->key = k;
+
+            hash_value* hval = (hash_value*)malloc(sizeof(hash_value));
+            hval->value_len = value.size();
+            hval->value_offset = last_value_offset_;
+            if (total_value_size_in_memory_ += value.size() < max_value_size_in_memory_)
+            {
+                char* v = (char*)malloc(value.size() + 1);
+                memcpy(v, value.c_str(), value.size());
+                v[value.size()] = 0;
+                hval->value_raw = v;
+            }
+            else
+            {
+                hval->value_raw = NULL;
+            }
+            item->val = hval;
+            hash_join(hid_, item);
+
         }
+    }
+
+    void write_record_to_disk(const string& key, const string& value)
+    {
+        int len = key.size();
+        write(fd_data_, &len, 4);
+        write(fd_data_, key.c_str(), len);
+        len = value.size();
+        write(fd_data_, &len, 4);
+        write(fd_data_, value.c_str(), len);
     }
 
 private:
     hash_table* hid_;
     map<string, string> data_;
-    int fd_;
+    int fd_data_;
+    int fd_index_;
     char* buf1_;
     char* buf2_;
+    int total_value_size_in_memory_;
+    int total_value_offset_;
+    int max_value_size_in_memory_;
+    int last_value_offset_;
+    int last_value_len_;
 };
 
 void random_buf(char* buf, int len)
@@ -464,7 +540,6 @@ void test1(int count)
     for (vector<string>::iterator it = keys.begin(); it != keys.end(); ++it)
     {
         string val = answer.get(*it);
-        printf("get hash, key:%s val:%s\n", it->c_str(), val.c_str());
     }
     end = getCurMillseconds();
     printf("query hash %lu items costs %lu ms\n", keys.size(), end - begin);
@@ -479,9 +554,6 @@ void test1(int count)
             printf("get val:%s\n", str.c_str());
             break;
         }
-        printf("key:%s\n", it->first.c_str());
-        printf("set val:%s\n", it->second.c_str());
-        printf("get val:%s\n", str.c_str());
     }
     end = getCurMillseconds();
     printf("add %d items costs %lu ms, total buf len:%ld\n", count, end - begin, total_len);
@@ -492,7 +564,7 @@ void test1(int count)
 int main(int argc, char** argv)
 {
 
-    test1(200000);
+    test1(10);
     sleep(60);
     return 0;
     {
