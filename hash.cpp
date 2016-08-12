@@ -21,16 +21,14 @@ using std::vector;
 typedef void HASHFREE(void *);
 typedef int HASHCMP(const void *, const void *);
 typedef unsigned int HASHHASH(const void *, unsigned int);
-typedef struct _hash_link hash_link;
-typedef struct _hash_table hash_table;
 
-struct _hash_link {
+struct hash_link {
     void *key;
     void* val;
     hash_link *next;
 };
 
-struct _hash_table {
+struct hash_table {
     hash_link **buckets;
     HASHCMP *cmp;
     HASHHASH *hash;
@@ -39,16 +37,6 @@ struct _hash_table {
     hash_link *next;
     int count;
 };
-
-hash_table *hash_create(HASHCMP *, int, HASHHASH *);
-void hash_join(hash_table *, hash_link *);
-hash_link *hash_lookup(hash_table *, const void *);
-void hash_first(hash_table *);
-hash_link *hash_next(hash_table *);
-hash_link *hash_get_bucket(hash_table *, unsigned int);
-void hashFreeMemory(hash_table *);
-void hashFreeItems(hash_table *, HASHFREE *);
-HASHHASH hash4;
 
 #define  DEFAULT_HASH_SIZE 7951	/* prime number < 8192 */
 
@@ -225,13 +213,11 @@ public:
     {
         if ((hid_ = hash_create((HASHCMP *) strcmp, 100000, hash4)) < 0) 
         {
-            //printf("hash_create error.\n");
             exit(1);
         }
         fd_data_ = open("data.db", O_CREAT | O_RDWR, S_IRWXU | S_IRWXO);
         if (fd_data_ <= 0)
         {
-            //printf("open tmp.dat failed!\n");
             exit(1);
         }
         fd_index_ = open("index.db", O_CREAT | O_RDWR, S_IRWXU | S_IRWXO);
@@ -245,13 +231,12 @@ public:
 
         total_value_size_in_memory_ = 0;
         total_value_offset_ = 0;
-        max_value_size_in_memory_ = 100 * 1024 * 1024;
+        max_value_size_in_memory_ = 1 * 1024 * 1024;
         last_value_offset_ = 0;
         last_value_len_ = 0;
 
         read_index();
         read_data();
-
     }
     
     ~Answer()
@@ -352,7 +337,6 @@ public:
                 }
 
             }
-            total_value_size_in_memory_ += value->value_len;
             ++count;
        }
        // 读取最后一块value，看是否完好
@@ -378,6 +362,8 @@ public:
         *value = (char*)malloc(value_len + 1);
         memcpy(*value, buf1_, value_len);
         (*value)[value_len] = 0;
+
+        total_value_size_in_memory_ += value_len;
 
         return true;
     }
@@ -408,6 +394,9 @@ public:
 
     void put(const string& key, const string& value)
     {
+        int static total_size = 0;
+        int static total_key_size = 0;
+        total_size += value.size();
         // 追加索引文件
         int klen = key.size();
         write(fd_index_, &klen, 4);
@@ -428,9 +417,14 @@ public:
         if (item)
         {
             hash_value* v = (hash_value*)item->val;
-            free(v->value_raw);
-            v->value_raw = NULL;
-            total_value_size_in_memory_ -= v->value_len;
+            if (v->value_raw)
+            {
+                free(v->value_raw);
+                v->value_raw = NULL;
+                total_value_size_in_memory_ -= v->value_len;
+                //printf("free memory size:%d total_value_size_in_memory_:%d total_size:%d\n", v->value_len, total_value_size_in_memory_, total_size);
+            }
+
             v->value_len = value.size();
             v->value_offset = last_value_offset_;
             if (total_value_size_in_memory_ + value.size() < max_value_size_in_memory_)
@@ -440,6 +434,8 @@ public:
                 new_value_raw[value.size()] = 0;
                 v->value_raw = new_value_raw;
                 total_value_size_in_memory_ += value.size();
+
+                //printf("replace value, malloc memory size:%ld total_value_size_in_memory_:%d total_size:%d\n", value.size(), total_value_size_in_memory_, total_size);
             }
         }
         else
@@ -451,15 +447,20 @@ public:
             item = (hash_link*)malloc(sizeof(hash_link));
             item->key = k;
 
+            total_key_size += (key.size() + sizeof(hash_link));
+            //printf("malloc key, total_key_size:%d total_value_size:%d\n", total_key_size, total_size);
+
             hash_value* hval = (hash_value*)malloc(sizeof(hash_value));
             hval->value_len = value.size();
             hval->value_offset = last_value_offset_;
-            if (total_value_size_in_memory_ += value.size() < max_value_size_in_memory_)
+            if (total_value_size_in_memory_ + value.size() < max_value_size_in_memory_)
             {
                 char* v = (char*)malloc(value.size() + 1);
                 memcpy(v, value.c_str(), value.size());
                 v[value.size()] = 0;
                 hval->value_raw = v;
+                total_value_size_in_memory_ += value.size();
+                //printf("new value, malloc memory size:%ld total_value_size_in_memory_:%d total_size:%d\n", value.size(), total_value_size_in_memory_, total_size);
             }
             else
             {
@@ -469,21 +470,29 @@ public:
             hash_join(hid_, item);
 
         }
+        static int count = 0;
+        if (count++ % 10000 == 1)
+        {
+            ///printf("count:%d add klen:%ld vlen:%ld total_value_size_in_memory_:%d\n", count, key.size(), value.size(), total_value_size_in_memory_);
+        }
     }
 
-    void write_record_to_disk(const string& key, const string& value)
+    void stat_hash()
     {
-        int len = key.size();
-        write(fd_data_, &len, 4);
-        write(fd_data_, key.c_str(), len);
-        len = value.size();
-        write(fd_data_, &len, 4);
-        write(fd_data_, value.c_str(), len);
+        hash_first(hid_);
+        hash_link* node;
+        int count = 0;
+        while ((node = hash_next(hid_)) && count < hid_->count)
+        {
+            hash_value* hval = (hash_value*)node->val;
+            //printf("key:%s\nvalue_offset:%d value_len:%d value:%s\n", (char*)node->key, hval->value_offset, hval->value_len, (char*)hval->value_raw);
+            ++count;
+        }
+        printf("total count:%d\n", count);
     }
 
 private:
     hash_table* hid_;
-    map<string, string> data_;
     int fd_data_;
     int fd_index_;
     char* buf1_;
@@ -511,32 +520,24 @@ void test1(int count)
     char *key = (char*)malloc(1024 * 1024);
     char *val= (char*)malloc(1024 * 1024);
     int64_t total_len = 0;
-    map<string, string> items;
     vector<string> keys;
+    int key_len = rand() % 290 + 10;
+    total_len += key_len;
+    random_buf(key, key_len);
     for (int i = 0; i < count; ++i)
     {
-        //int key_len = rand() % 60 + 10;
-        //int val_len = rand() % 80 + 80;
-        //total_len += key_len;
-        //total_len += val_len;
-        //random_buf(key, key_len);
-        //random_buf(val, val_len);
-        sprintf(key, "%08d", i);
-        sprintf(val, "%08d", i);
+        int val_len = rand() % 2048 + 1024;
+        total_len += val_len;
+        random_buf(val, val_len);
+        //sprintf(key, "%08d", i);
+        //sprintf(val, "%08d", i);
         answer.put(key, val);
-        items[key] = val;
         keys.push_back(key);
-        printf("add key:%s val:%s\n", key, val);
-    }
-    begin = getCurMillseconds();
-    for (vector<string>::iterator it = keys.begin(); it != keys.end(); ++it)
-    {
-        items.find(*it);
+        //printf("add key:%s val:%s\n", key, val);
     }
     uint64_t end = getCurMillseconds();
-    printf("query map %lu items costs %lu ms\n", keys.size(), end - begin);
-
-    begin = getCurMillseconds();
+    printf("put hash %d items costs %lu ms\n", count, end - begin);
+    begin = end;
     for (vector<string>::iterator it = keys.begin(); it != keys.end(); ++it)
     {
         string val = answer.get(*it);
@@ -544,28 +545,35 @@ void test1(int count)
     end = getCurMillseconds();
     printf("query hash %lu items costs %lu ms\n", keys.size(), end - begin);
 
-    for (map<string, string>::iterator it = items.begin(); it != items.end(); ++it)
-    {
-        string str = answer.get(it->first);
-        if (str != it->second)
-        {
-            printf("different, key:%s\n", it->first.c_str());
-            printf("set val:%s\n", it->second.c_str());
-            printf("get val:%s\n", str.c_str());
-            break;
-        }
-    }
-    end = getCurMillseconds();
-    printf("add %d items costs %lu ms, total buf len:%ld\n", count, end - begin, total_len);
     if (key) free(key);
     if (val) free(val);
+
+    answer.stat_hash();
+}
+
+void test2(int count)
+{
+    Answer answer;
+    uint64_t begin = getCurMillseconds();
+    char *key = (char*)malloc(1024 * 1024);
+    char *val = (char*)malloc(1024 * 1024);
+    for (int i = 0; i < count; ++i)
+    {
+        sprintf(key, "%08d", i);
+        sprintf(val, "%08d", i);
+        answer.put(key, val);
+        printf("add key:%s val:%s\n", key, val);
+        printf("get key:%s val:%s\n", key, answer.get(key).c_str());
+    }
+    uint64_t end = getCurMillseconds();
+    printf("add %d count item costs %lu ms\n", count, end - begin);
 }
 
 int main(int argc, char** argv)
 {
 
-    test1(10);
-    sleep(60);
+    test2(4);
+    sleep(10);
     return 0;
     {
         //char query[16];
