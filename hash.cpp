@@ -211,7 +211,7 @@ class Answer
 public:
     Answer()
     {
-        if ((hid_ = hash_create((HASHCMP *) strcmp, 100000, hash4)) < 0) 
+        if ((hid_ = hash_create((HASHCMP *) strcmp, 1000000, hash4)) < 0) 
         {
             exit(1);
         }
@@ -231,7 +231,7 @@ public:
 
         total_value_size_in_memory_ = 0;
         total_value_offset_ = 0;
-        max_value_size_in_memory_ = 1 * 1024 * 1024;
+        max_value_size_in_memory_ = 10 * 1024 * 1024;
         last_value_offset_ = 0;
         last_value_len_ = 0;
 
@@ -286,7 +286,7 @@ public:
         lseek(fd_index_, offset, SEEK_SET); 
     }
     
-    bool read_index_from_disk(string& key, int& value_offset, int value_len)
+    bool read_index_from_disk(string& key, int& value_offset, int& value_len)
     {
         // keylen key vlen value_offset
         int klen;
@@ -335,7 +335,10 @@ public:
                         ((hash_value*)item->val)->value_raw = v;
                     }
                 }
-
+                else
+                {
+                    value->value_offset = -1;
+                }
             }
             ++count;
        }
@@ -378,12 +381,16 @@ public:
             {
                 return (char*)hval->value_raw;
             }
-            else
+            else if (hval->value_offset > 0)
             {
                 lseek(fd_data_, hval->value_offset, SEEK_SET);
                 read(fd_data_, buf1_, hval->value_len);
                 buf1_[hval->value_len] = 0;
                 return buf1_;
+            }
+            else
+            {
+                return "NULL";
             }
         }
         else
@@ -571,8 +578,7 @@ void test2(int count)
 
 int main(int argc, char** argv)
 {
-
-    test2(4);
+    test1(50000);
     sleep(10);
     return 0;
     {
